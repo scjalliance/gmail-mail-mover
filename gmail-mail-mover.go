@@ -88,7 +88,7 @@ var MessageIsArchivePlaceholderMatch = regexp.MustCompile("(?im)^X-SCJMAILARCHIV
 var MessageIdMatch = regexp.MustCompile(`(?im)^Message-ID:\s*(<\S+>)`)
 var MessageIdMatchField = regexp.MustCompile(`(?im)^Message-ID:\s*[^\r\n]+`)
 var MessageContentTypeMatch = regexp.MustCompile(`(?im)^Content-Type:\s*(.+?)(\r?\n\s+.+?)?$`)
-var SubjectMatch = regexp.MustCompile(`(?im)^Subject:[ \t]*(\S[^\r\n]+)`)
+var SubjectMatch = regexp.MustCompile(`(?im)^Subject:[ \t]*(\S[^\r\n]+)?[\r\n]`)
 
 func main() {
 	fmt.Println(License)
@@ -204,13 +204,11 @@ func main() {
 		}
 		rfc822msgid := rfc822msgidSet[1]
 
+		subject := "(no subject)"
 		subjectSet := SubjectMatch.FindStringSubmatch(imap.AsString(fieldMap["BODY[HEADER]"]))
-		if len(subjectSet) < 2 { // has to match something...
-			fmt.Printf("Skipping message %d because it is missing a valid Subject header.\n", i1)
-			fmt.Println(imap.AsString(fieldMap["BODY[HEADER]"]))
-			continue
+		if len(subjectSet) > 1 && len(subjectSet[1]) > 0 { // matched something useful
+			subject = subjectSet[1]
 		}
-		subject := subjectSet[1]
 		fmt.Printf("\tMessage %d: [%s]\n\tSUB: [%s]\n\tMID: [%s]\n", i1, messageSize, subject, rfc822msgid)
 
 		if config.DryRun {
