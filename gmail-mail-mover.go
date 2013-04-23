@@ -85,7 +85,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 var debugMask = imap.LogNone
 
 var MessageIsArchivePlaceholderMatch = regexp.MustCompile("(?im)^X-SCJMAILARCHIVE:")
-var MessageIdMatch = regexp.MustCompile(`(?im)^Message-ID:\s*(\S+)`)
+var MessageIdMatch = regexp.MustCompile(`(?im)^Message-ID:\s*(<\S+>)`)
+var MessageIdMatchField = regexp.MustCompile(`(?im)^Message-ID:\s*[^\r\n]+`)
 var MessageContentTypeMatch = regexp.MustCompile(`(?im)^Content-Type:\s*(.+?)(\r?\n\s+.+?)?$`)
 var SubjectMatch = regexp.MustCompile(`(?im)^Subject:[ \t]*(\S[^\r\n]+)`)
 
@@ -231,8 +232,12 @@ func main() {
 		}
 		fieldMap = imap.AsFieldMap(messageData.Fields[2])
 
+		// replace Message-ID header with (supposedly) vetted legit Message-ID, for both the BODY[HEADER] and the full BODY[] itself 
+		messageHeader := MessageIdMatchField.ReplaceAllLiteral(imap.AsBytes(fieldMap["BODY[HEADER]"]), []byte(fmt.Sprintf("Message-ID: %s", rfc822msgid)))
+		messageBody := MessageIdMatchField.ReplaceAllLiteral(imap.AsBytes(fieldMap["BODY[]"]), []byte(fmt.Sprintf("Message-ID: %s", rfc822msgid)))
+
 		fmt.Printf("Uploading %s message %d of %d to [%s]...\n", messageSize, i1, messagesMatched, ap.Archive.Username)
-		_, err = imap.Wait(ap.Archive.Connection.Append("[Gmail]/All Mail", imap.AsFlagSet(fieldMap["FLAGS"]), &timedate, imap.NewLiteral(imap.AsBytes(fieldMap["BODY[]"])))) // insert into archive account
+		_, err = imap.Wait(ap.Archive.Connection.Append("[Gmail]/All Mail", imap.AsFlagSet(fieldMap["FLAGS"]), &timedate, imap.NewLiteral(messageBody))) // insert into archive account
 		if err != nil {
 			panic(err)
 		}
@@ -245,6 +250,10 @@ func main() {
 		if len(newMessageCmd.Data) > 0 {
 			archivedMessageSet, _ := imap.NewSeqSet("")
 			archivedMessageSet.AddNum(newMessageCmd.Data[0].SearchResults()...)
+			if archivedMessageSet.Empty() {
+				fmt.Println(string(messageHeader))
+				panic("Unexpected empty data set.")
+			}
 
 			fmt.Printf("Adding necessary labels to [%s] for message %d...\n", ap.Archive.Username, i1)
 			for _, l := range imap.AsList(fieldMap["X-GM-LABELS"]) {
@@ -273,6 +282,8 @@ func main() {
 			if err != nil {
 				panic(err)
 			}
+
+			// TODO: can we skip this search and just use the previously returned UID?  I think yes.  I think this will cause a problem if the Message-ID is rewritten.
 			deleteableMessageCmd, err := imap.Wait(ap.Main.Connection.UIDSearch(`X-GM-RAW`, imap.Quote(fmt.Sprintf("rfc822msgid:%s", rfc822msgid), true)))
 			if err != nil {
 				panic(err)
@@ -300,7 +311,7 @@ func main() {
 
 			// append and update placeholder message
 			fmt.Printf("Inserting archive placeholder for message %d in [%s]...\n", i1, ap.Main.Username)
-			alteredHeader := MessageContentTypeMatch.ReplaceAllString(imap.AsString(fieldMap["BODY[HEADER]"]), "Content-Type: text/html; charset=UTF-8\r\nX-SCJMAILARCHIVE: true")
+			alteredHeader := MessageContentTypeMatch.ReplaceAllLiteralString(string(messageHeader), "Content-Type: text/html; charset=UTF-8\r\nX-SCJMAILARCHIVE: true")
 			placeholderMessage := fmt.Sprintf("%s\r\n<span style='font-size:larger'><span style='font-size:larger;font-weight:bold'>NOTICE:</span><br/>\r\n<span style='font-weight:bold'>This message was moved to an email archive account via an automated process.</span><br/>\r\n<br/>\r\nAt the time of archival, the destination archive account was:<br/>\r\n<span style='font-family:monospace'>%s</span><br/>\r\n<br/>\r\nIf the archive account is a Gmail account, you may be able to locate the\r\nmessage by searching for this string from within the archive account:<br/>\r\n<span style='font-family:monospace'>rfc822msgid:%s</span><br/>\r\n<br/>\r\nThe query used to select this email for archival was:<br/>\r\n<span style='font-family:monospace'>%s</span><br/>\r\n<br/>\r\nThis archival operation occurred at:<br/>\r\n<span style='font-family:monospace'>%s</span><br/>\r\n<br/>\r\nThis email was archived using:<br/>\r\n<span style='font-family:monospace'>%s</span></span><br/>\r\n", alteredHeader, html.EscapeString(ap.Archive.Username), html.EscapeString(rfc822msgid), html.EscapeString(SearchQuery), html.EscapeString(time.Now().String()), html.EscapeString(ProgramName))
 			_, err = imap.Wait(ap.Main.Connection.Append("[Gmail]/All Mail", imap.AsFlagSet(fieldMap["FLAGS"]), &timedate, imap.NewLiteral([]byte(placeholderMessage)))) // insert a "moved this message" placeholder at source location
 			if err != nil {
