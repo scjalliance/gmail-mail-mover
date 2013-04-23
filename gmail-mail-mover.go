@@ -94,7 +94,7 @@ func main() {
 	fmt.Println(ProgramName)
 	fmt.Println()
 
-	configFileName := "mail-archive.conf"
+	configFileName := "gmail-mail-mover.conf"
 	if len(os.Args) > 1 {
 		configFileName = os.Args[1]
 	}
